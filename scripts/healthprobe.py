@@ -98,7 +98,7 @@ def _probe(url: str, payload: dict, timeout: float, expect: str) -> tuple[bool, 
 # the probe now reads the engine's own /metrics twice: requests running and
 # token counters advancing = busy, healthy. A wedged API server cannot answer
 # /metrics and a hung engine core advances nothing, so a real hang still fails.
-# Spec: project-deepdarshak/.claude/specs/2026-10-10-gpu-watchdog-recovers-a-starved-vllm.md (REQ-WD-02)
+# Spec: project-deepdarshak/.claude/specs/completed/2026-10-10-gpu-watchdog-recovers-a-starved-vllm.md (REQ-WD-02)
 METRICS_TIMEOUT = 1.5
 PROGRESS_WAIT = 1.5
 _COUNTER = re.compile(r"^(vllm:(?:num_requests_running|prompt_tokens_total|generation_tokens_total))\{[^}]*\}\s+([0-9.eE+-]+)$")

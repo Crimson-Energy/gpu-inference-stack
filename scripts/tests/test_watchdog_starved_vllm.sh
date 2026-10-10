@@ -10,7 +10,7 @@
 # containers, did nothing: every LLM call on the box failed until Infinity was
 # restarted by hand.
 #
-# Spec: project-deepdarshak/.claude/specs/2026-10-10-gpu-watchdog-recovers-a-starved-vllm.md
+# Spec: project-deepdarshak/.claude/specs/completed/2026-10-10-gpu-watchdog-recovers-a-starved-vllm.md
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

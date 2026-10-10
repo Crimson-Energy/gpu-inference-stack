@@ -106,7 +106,7 @@ model_list:
       # that the engine queues or preempts instead. Under live extraction this
       # role is ALWAYS full (23 requests per document), so latency-sensitive
       # callers belong on interactive/fast, not here.
-      # Spec: project-deepdarshak/.claude/specs/2026-10-10-gpu-watchdog-recovers-a-starved-vllm.md (REQ-WD-03)
+      # Spec: project-deepdarshak/.claude/specs/completed/2026-10-10-gpu-watchdog-recovers-a-starved-vllm.md (REQ-WD-03)
       max_parallel_requests: 8
       # Hybrid-thinking models: keep thinking OFF for this role.
       #

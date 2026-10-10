@@ -6,7 +6,7 @@ container unhealthy and the watchdog restarted a healthy engine — every LLM
 call on the box failed while it reloaded. A probe that times out now asks the
 engine's own /metrics whether it is making progress.
 
-Spec: project-deepdarshak/.claude/specs/2026-10-10-gpu-watchdog-recovers-a-starved-vllm.md (REQ-WD-02)
+Spec: project-deepdarshak/.claude/specs/completed/2026-10-10-gpu-watchdog-recovers-a-starved-vllm.md (REQ-WD-02)
 """
 import importlib.util
 import io

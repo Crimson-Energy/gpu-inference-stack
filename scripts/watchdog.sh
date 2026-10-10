@@ -114,7 +114,7 @@ for id in "${!unhealthy[@]}"; do
     fi
 done
 
-# ── A vLLM that cannot START (spec project-deepdarshak/.claude/specs/
+# ── A vLLM that cannot START (spec project-deepdarshak/.claude/specs/completed/
 #    2026-10-10-gpu-watchdog-recovers-a-starved-vllm.md) ──────────────────────
 #
 # Not the unhealthy path above: vLLM refuses to start when the card has less

@@ -113,3 +113,59 @@ for id in "${!unhealthy[@]}"; do
         log "$name RESTART FAILED — leaving it alone"
     fi
 done
+
+# ── A vLLM that cannot START (spec project-deepdarshak/.claude/specs/
+#    2026-10-10-gpu-watchdog-recovers-a-starved-vllm.md) ──────────────────────
+#
+# Not the unhealthy path above: vLLM refuses to start when the card has less
+# free memory than its gpu-memory-utilization asks for, exits, and Docker's
+# restart policy relaunches it into the same refusal — a crash loop that is
+# never "unhealthy", so nothing above sees it. On a Blackwell-32GB box the
+# memory is held by the co-resident Infinity, whose PyTorch cache only grows
+# (3.8 GB when 0.84 was chosen, 5.65 GB on 2026-10-10 ddai3: 38 restarts, 32
+# minutes without an LLM). Restarting Infinity releases the cache; vLLM's own
+# restart policy then finds the memory on its next start. vLLM itself is not
+# restarted here.
+STARVED_PATTERN='on startup is less than desired GPU memory utilization'
+
+if ! listing=$(docker ps -a --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME:-gpu-inference-stack}" \
+    --format '{{.ID}} {{.Names}} {{.Label "com.docker.compose.service"}} {{.Status}}' 2>/dev/null); then
+    log "Docker listing failed — no starved-engine check this pass"
+    exit 0
+fi
+
+infinity_id=""; infinity_name=""
+while read -r id name service status; do
+    if [ "$service" = "infinity" ]; then infinity_id="$id"; infinity_name="$name"; fi
+done <<< "$listing"
+
+while read -r id name service status; do
+    [ -n "$id" ] || continue
+    [[ "$service" =~ ^vllm[0-9]*$ ]] || continue
+    case "$status" in *"(healthy)"*) continue ;; esac
+    docker logs --since 10m --tail 400 "$id" 2>&1 | grep -q "$STARVED_PATTERN" || continue
+
+    if [ -z "$infinity_id" ]; then
+        log "$name cannot start: GPU memory below its utilization, and no Infinity in this project to release it — this needs a human"
+        continue
+    fi
+    pair_file="$STATE_DIR/last_starved_restart.$name"
+    now=$(date +%s)
+    last=$(cat "$pair_file" 2>/dev/null || echo 0)
+    [[ "$last" =~ ^[0-9]+$ ]] || last=0
+    if [ $((now - last)) -lt "$COOLDOWN_S" ]; then
+        log "$name still cannot start $((now - last))s after $infinity_name was restarted (cooldown ${COOLDOWN_S}s) — this needs a human"
+        continue
+    fi
+    if [ "$DRY_RUN" -eq 1 ]; then
+        log "$name cannot start (GPU memory held by $infinity_name) — would restart $infinity_name (dry run)"
+        continue
+    fi
+    log "$name cannot start: GPU memory held by $infinity_name's cache — restarting $infinity_name to release it"
+    if docker restart "$infinity_id" >/dev/null 2>&1; then
+        echo "$now" > "$pair_file"
+        log "$infinity_name restarted; $name's restart policy retries on the freed memory"
+    else
+        log "$infinity_name RESTART FAILED — this needs a human"
+    fi
+done <<< "$listing"

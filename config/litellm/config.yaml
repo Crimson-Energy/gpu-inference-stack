@@ -95,7 +95,19 @@ model_list:
       # delegation impossible — the peer's LiteLLM 401s.
       api_key: os.environ/CONTRACT_BULK_API_KEY
       timeout: 600
-      max_parallel_requests: 4
+      # 8, measured on ddai3 2026-10-10 (Qwen3.6-35B-A3B, RTX PRO 4500 32 GB,
+      # beside live ingest), 12 concurrent ~6k-token bulk requests for 180 s:
+      #   cap 4: 12.0 req/min, p50 83 s (queueing here), interactive p95 0.30 s
+      #   cap 8: 36.7 req/min, p50 15 s,                interactive p95 0.56 s
+      #   (20 requests at cap 8: 65/min, interactive p95 0.77 s, max 1.1 s)
+      # Health probe passed every sample, zero preemptions throughout. Not
+      # higher: graph extraction sends up to ~26k-token prompts, and 8 of
+      # those is ~100% of the 204k-token KV pool measured on ddai4 — beyond
+      # that the engine queues or preempts instead. Under live extraction this
+      # role is ALWAYS full (23 requests per document), so latency-sensitive
+      # callers belong on interactive/fast, not here.
+      # Spec: project-deepdarshak/.claude/specs/2026-10-10-gpu-watchdog-recovers-a-starved-vllm.md (REQ-WD-03)
+      max_parallel_requests: 8
       # Hybrid-thinking models: keep thinking OFF for this role.
       #
       # Spec 0035 puts thinking-mode config on this alias layer, and the two

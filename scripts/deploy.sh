@@ -207,6 +207,17 @@ if [ "${ENABLE_INFINITY:-true}" = "true" ]; then
     echo "Enabling Infinity (embeddings + reranking)..."
 fi
 
+# >>> stt role (scripts/tests/test_stt_role.sh runs this block on its own)
+# Speech-to-text. OFF by default, and the switch publishes the alias too: the
+# compose default is unserved/stt, so a box without the backend never lists a
+# dead gpu/stt/whisper. An explicit CONTRACT_STT_ALIAS still wins.
+if [ "${ENABLE_STT:-false}" = "true" ]; then
+    PROFILES="$PROFILES,stt"
+    export CONTRACT_STT_ALIAS="${CONTRACT_STT_ALIAS:-gpu/stt/whisper}"
+    echo "Enabling speech-to-text (${STT_DEVICE:-cpu})..."
+fi
+# <<< stt role
+
 if [ "${ENABLE_EMBEDDINGS}" = "true" ]; then
     PROFILES="$PROFILES,embeddings"
     echo "Enabling Text Embeddings (TEI)..."

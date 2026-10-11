@@ -26,6 +26,7 @@ and may be renamed or re-pointed freely.
 | `gpu/chat/vision` | image input | optional |
 | `gpu/embed/bge-m3` | `BAAI/bge-m3` exactly, 1024-dim | yes |
 | `gpu/rerank/bge-reranker-v2-m3` | `BAAI/bge-reranker-v2-m3` cross-encoder | optional |
+| `gpu/stt/whisper` | `POST /v1/audio/transcriptions` (multipart `file`, optional `language`/`prompt`) → `{text}`, Whisper-family; published only when `ENABLE_STT=true` | optional |
 
 The contract is a set of **roles**, and each box fills each role with whatever
 weights it can run — a 96GB box serves Qwen3.6-35B behind

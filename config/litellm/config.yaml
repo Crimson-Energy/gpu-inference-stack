@@ -264,6 +264,20 @@ model_list:
   #     api_key: "EMPTY"
   #     timeout: 300
 
+  # OPTIONAL speech-to-text (POST /v1/audio/transcriptions), backed by the
+  # `stt` service. Env-driven name like CONTRACT_VISION_ALIAS, but defaulting
+  # the other way: compose names it unserved/stt, and deploy.sh publishes it as
+  # gpu/stt/whisper only when ENABLE_STT=true, so a box that does not run the
+  # backend never lists a dead role.
+  - model_name: os.environ/CONTRACT_STT_ALIAS
+    litellm_params:
+      model: os.environ/CONTRACT_STT_MODEL
+      api_base: os.environ/CONTRACT_STT_API_BASE
+      api_key: "EMPTY"
+      timeout: 60
+    model_info:
+      mode: audio_transcription
+
   # ==========================================================================
   # INTERNAL TOPOLOGY BELOW — not part of any consumer contract
   # ==========================================================================

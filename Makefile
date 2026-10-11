@@ -48,6 +48,7 @@ $(shell set -a; for f in $$(./scripts/profile-files.sh 2>/dev/null); do . "$$f";
   [ "$${ENABLE_OLLAMA:-false}"     = "true" ] && p="$$p --profile ollama"; \
   [ "$${ENABLE_INFINITY:-false}"   = "true" ] && p="$$p --profile infinity"; \
   [ "$${ENABLE_EMBEDDINGS:-false}" = "true" ] && p="$$p --profile embeddings"; \
+  [ "$${ENABLE_STT:-false}"       = "true" ] && p="$$p --profile stt"; \
   echo "$$p")
 endef
 
@@ -204,19 +205,20 @@ create-key: _require_profile
 	 printf "  $(DIM)4$(RST) gpu/chat/vision       $(DIM)— image input (if available)$(RST)\n"; \
 	 printf "  $(DIM)5$(RST) gpu/embed/bge-m3      $(DIM)— embeddings, 1024-dim$(RST)\n"; \
 	 printf "  $(DIM)6$(RST) gpu/rerank/bge-reranker-v2-m3 $(DIM)— cross-encoder reranking$(RST)\n"; \
+	 printf "  $(DIM)7$(RST) gpu/stt/whisper       $(DIM)— speech-to-text (if available)$(RST)\n"; \
 	 printf "\n"; \
 	 read -r -p "  Key alias (e.g. myapp, backend-prod): " alias; \
 	 if [ -z "$$alias" ]; then printf "  $(RED)Alias cannot be empty.$(RST)\n"; exit 1; fi; \
 	 printf "\n  Which models? Enter numbers separated by spaces, or:\n"; \
 	 printf "    $(DIM)chat$(RST)  = 1 2 3 (all chat models)\n"; \
-	 printf "    $(DIM)all$(RST)   = 1 2 3 4 5 6 (everything)\n"; \
+	 printf "    $(DIM)all$(RST)   = 1 2 3 4 5 6 7 (everything)\n"; \
 	 printf "    $(DIM)Enter$(RST) = 1 2 3 (default: chat models)\n\n"; \
 	 read -r -p "  Models [chat]: " model_input; \
 	 model_input="$${model_input:-chat}"; \
 	 models=""; \
 	 case "$$model_input" in \
 	   chat) models='["gpu/chat/interactive","gpu/chat/bulk","gpu/chat/fast"]';; \
-	   all)  models='["gpu/chat/interactive","gpu/chat/bulk","gpu/chat/fast","gpu/chat/vision","gpu/embed/bge-m3","gpu/rerank/bge-reranker-v2-m3"]';; \
+	   all)  models='["gpu/chat/interactive","gpu/chat/bulk","gpu/chat/fast","gpu/chat/vision","gpu/embed/bge-m3","gpu/rerank/bge-reranker-v2-m3","gpu/stt/whisper"]';; \
 	   *) \
 	     for n in $$model_input; do \
 	       case "$$n" in \
@@ -226,6 +228,7 @@ create-key: _require_profile
 	         4) models="$$models\"gpu/chat/vision\",";; \
 	         5) models="$$models\"gpu/embed/bge-m3\",";; \
 	         6) models="$$models\"gpu/rerank/bge-reranker-v2-m3\",";; \
+	         7) models="$$models\"gpu/stt/whisper\",";; \
 	         *) printf "  $(YEL)Unknown model number: $$n$(RST)\n";; \
 	       esac; \
 	     done; \

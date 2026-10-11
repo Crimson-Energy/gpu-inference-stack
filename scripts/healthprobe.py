@@ -12,7 +12,8 @@ broken was the only thing the probe did not touch.
 Two separate gaps, and fixing one without the other fixes nothing:
 
 1. A liveness probe cannot see a hung inference path. So this probe sends a
-   real request — one short embedding, or a short completion — and checks
+   real request — one short embedding, a short completion, or a transcription
+   of one second of silence — and checks
    the response has the shape the contract promises.
 
 2. `restart: unless-stopped` does NOT act on health. Docker's restart policy
@@ -40,6 +41,7 @@ after its own `retries`, which is what the host watchdog keys on.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import math
 import re
@@ -48,12 +50,35 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
+import wave
+
+
+def _silent_wav() -> bytes:
+    """One second of 16 kHz mono silence: Whisper answers it with ""."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"\0\0" * 16000)
+    return buf.getvalue()
+
+
+def _multipart(model: str) -> tuple[bytes, str]:
+    boundary = uuid.uuid4().hex
+    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n{model}\r\n"
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"probe.wav\"\r\n"
+            f"Content-Type: audio/wav\r\n\r\n").encode() + _silent_wav() + f"\r\n--{boundary}--\r\n".encode()
+    return body, f"multipart/form-data; boundary={boundary}"
 
 
 def _probe(url: str, payload: dict, timeout: float, expect: str) -> tuple[bool, str]:
-    req = urllib.request.Request(
-        url, data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"})
+    if expect == "text":
+        data, ctype = _multipart(payload["model"])
+    else:
+        data, ctype = json.dumps(payload).encode(), "application/json"
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": ctype})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             if r.status != 200:
@@ -65,6 +90,11 @@ def _probe(url: str, payload: dict, timeout: float, expect: str) -> tuple[bool, 
         if _is_timeout(e):
             return False, f"timeout: {e}"
         return False, f"{type(e).__name__}: {e}"
+    if expect == "text":
+        # Silence transcribes to "": an empty string is still an answer.
+        if not isinstance(body, dict) or not isinstance(body.get("text"), str):
+            return False, "200 but no 'text' in response"
+        return True, "ok"
     if not isinstance(body, dict) or not isinstance(body.get(expect), list) or not body[expect]:
         return False, f"200 but no {expect!r} in response"
     if expect == "data":
@@ -148,7 +178,7 @@ def _progressing(url: str) -> tuple[bool, str]:
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--url", required=True)
-    p.add_argument("--kind", choices=("embeddings", "chat"), required=True)
+    p.add_argument("--kind", choices=("embeddings", "chat", "transcription"), required=True)
     p.add_argument("--model", required=True)
     p.add_argument("--timeout", type=float, default=20.0)
     # Accepted and ignored, so an older compose file keeps working after an
@@ -159,6 +189,8 @@ def main() -> int:
 
     if args.kind == "embeddings":
         payload, expect = {"model": args.model, "input": ["health probe"]}, "data"
+    elif args.kind == "transcription":
+        payload, expect = {"model": args.model}, "text"
     else:
         payload = {"model": args.model, "max_tokens": 8,
                    "chat_template_kwargs": {"enable_thinking": False},

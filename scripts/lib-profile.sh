@@ -215,3 +215,21 @@ profile_assert_resolvable() {
     fi
     echo "  Server Profile: $name  (${p#$PROJECT_ROOT/})"
 }
+
+# The alias the optional stt role should publish, given the --env-file list
+# (last wins, read without sourcing). Prints gpu/stt/whisper when ENABLE_STT is
+# true and no file pins CONTRACT_STT_ALIAS; prints nothing otherwise, leaving
+# compose's unserved/stt default in force. dc.sh and deploy.sh export it, so
+# `make start` and deploy publish the same thing.
+# Spec: project-deepdarshak/.claude/specs/2026-10-11-voice-questions-for-the-advisor.md (REQ-STT-01)
+stt_contract_alias() {
+    local f v enabled="" pinned=""
+    for f in "$@"; do
+        [ -f "$f" ] || continue
+        v="$(sed -n 's/^ENABLE_STT=//p' "$f" | tail -1)"; [ -n "$v" ] && enabled="$v"
+        v="$(sed -n 's/^CONTRACT_STT_ALIAS=//p' "$f" | tail -1)"; [ -n "$v" ] && pinned="$v"
+    done
+    if [ "$enabled" = "true" ] && [ -z "$pinned" ]; then
+        echo "gpu/stt/whisper"
+    fi
+}

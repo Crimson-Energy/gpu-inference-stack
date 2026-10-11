@@ -39,6 +39,14 @@ if [ -f "$PROJECT_ROOT/.env.secrets" ] && [ -f "$PROJECT_ROOT/.age-key.txt" ]; t
     fi
 fi
 
+# The optional stt role publishes its contract alias only on a box that enables
+# it (lib-profile.sh stt_contract_alias). A caller's own value wins.
+if [ -z "${CONTRACT_STT_ALIAS:-}" ]; then
+    # shellcheck disable=SC2046
+    _stt_alias="$(stt_contract_alias $(profile_env_file_args | sed 's/--env-file//g'))"
+    [ -n "$_stt_alias" ] && export CONTRACT_STT_ALIAS="$_stt_alias"
+fi
+
 # Unquoted on purpose: profile_env_file_args emits separate --env-file words.
 # shellcheck disable=SC2046
 exec docker compose $(profile_env_file_args) -f "$PROJECT_ROOT/docker-compose.yml" "$@"

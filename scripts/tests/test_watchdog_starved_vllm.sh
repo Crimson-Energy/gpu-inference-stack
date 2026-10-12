@@ -11,6 +11,12 @@
 # restarted by hand.
 #
 # Spec: project-deepdarshak/.claude/specs/completed/2026-10-10-gpu-watchdog-recovers-a-starved-vllm.md
+#
+# 2026-10-12 (ddai3): the check had never fired. `docker logs | grep -q` under
+# pipefail returns 141 (SIGPIPE) on a real-sized log, and a second GPU tenant
+# (stt) meant restarting Infinity could no longer free enough. The watchdog now
+# STOPS every GPU tenant and starts them again once vLLM is healthy.
+# Spec: project-deepdarshak/.claude/specs/2026-10-12-gpu-watchdog-releases-every-gpu-tenant.md
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,8 +49,10 @@ case "$1" in
             *health=unhealthy*) cat "$W/unhealthy" 2>/dev/null || true ;;
             *)                  cat "$W/containers" 2>/dev/null || true ;;
         esac ;;
-    logs)    id="${@: -1}"; cat "$W/logs.$id" 2>/dev/null || true ;;
-    restart) echo "restart $2" >> "$WD_RESTARTS" ;;
+    # exec, so a reader that closes early kills the writer with SIGPIPE, as it
+    # does a real `docker logs` (an `|| true` here hid exactly that bug).
+    logs)    id="${@: -1}"; [ -f "$W/logs.$id" ] && exec cat "$W/logs.$id"; exit 0 ;;
+    restart|stop|start) echo "$1 $2" >> "$WD_RESTARTS" ;;
     *)       : ;;
 esac
 STUB
@@ -59,17 +67,64 @@ restarts() { tr '\n' ' ' < "$FIX/restarts" | sed 's/ $//'; }
 
 echo "watchdog: a starved vLLM"
 
+STARVED='v1 vllm-new vllm Restarting (1) 4 seconds ago'
+TENANTS='i1 infinity infinity Up 10 hours (healthy)
+s1 stt stt Up 10 hours (healthy)
+p1 prometheus prometheus Up 10 hours (healthy)'
+
 reset_world
-printf 'v1 vllm-new vllm Restarting (1) 4 seconds ago\ni1 infinity infinity Up 10 hours (healthy)\n' > "$FIX/world/containers"
+printf '%s\n%s\n' "$STARVED" "$TENANTS" > "$FIX/world/containers"
+{ echo "$REFUSAL"; head -c 200000 /dev/zero | tr '\0' 'x' | fold -w 200; } > "$FIX/world/logs.v1"
+out=$(run_wd)
+is  "a refusal buried in a log larger than a pipe buffer is still seen" "stop i1 stop s1" "$(restarts)"
+
+reset_world
+printf '%s\n%s\n' "$STARVED" "$TENANTS" > "$FIX/world/containers"
 echo "$REFUSAL" > "$FIX/world/logs.v1"
 out=$(run_wd)
-is  "a starved vLLM gets Infinity restarted, and vLLM is left to its restart policy" "restart i1" "$(restarts)"
+is  "a starved vLLM gets every GPU tenant stopped, and nothing else touched" "stop i1 stop s1" "$(restarts)"
 has "it says why" "held by" "$out"
 
 : > "$FIX/restarts"
+printf 'v1 vllm-new vllm Up 40 seconds (health: starting)\n%s\n' "$TENANTS" > "$FIX/world/containers"
+run_wd >/dev/null
+is  "while vLLM is still starting, the tenants stay stopped and nothing is released again" "" "$(restarts)"
+
+printf 'v1 vllm-new vllm Up 3 minutes (healthy)\n%s\n' "$TENANTS" > "$FIX/world/containers"
 out=$(run_wd)
-is  "still starved inside the cooldown: nothing is restarted again" "" "$(restarts)"
+is  "once vLLM is healthy, the stopped tenants are started again" "start i1 start s1" "$(restarts)"
+: > "$FIX/restarts"
+run_wd >/dev/null
+is  "and only once" "" "$(restarts)"
+
+reset_world
+printf '%s\n%s\n' "$STARVED" "$TENANTS" > "$FIX/world/containers"
+echo "$REFUSAL" > "$FIX/world/logs.v1"
+run_wd >/dev/null
+: > "$FIX/restarts"
+out=$(WATCHDOG_RELEASE_MAX_S=0 run_wd)
+is  "a vLLM still down after the release window gets its tenants back anyway" "start i1 start s1" "$(restarts)"
 has "and a human is asked for" "needs a human" "$out"
+
+: > "$FIX/restarts"
+out=$(run_wd)
+is  "still starved inside the cooldown: nothing is stopped again" "" "$(restarts)"
+has "and a human is asked for" "needs a human" "$out"
+
+reset_world
+printf '%s\ni1 infinity infinity Up 10 hours (healthy)\ns1 stt stt Exited (0) 2 hours ago\n' "$STARVED" > "$FIX/world/containers"
+echo "$REFUSAL" > "$FIX/world/logs.v1"
+run_wd >/dev/null
+printf 'v1 vllm-new vllm Up 3 minutes (healthy)\ni1 infinity infinity Exited (0) 1 minute ago\ns1 stt stt Exited (0) 2 hours ago\n' > "$FIX/world/containers"
+run_wd >/dev/null
+is  "a tenant someone had already stopped is neither stopped nor started" "stop i1 start i1" "$(restarts)"
+
+reset_world
+printf 'v1 vllm-new vllm Up 3 minutes (healthy)\n%s\n' "$TENANTS" > "$FIX/world/containers"
+: > "$FIX/state/released.vllm-new"
+out=$(run_wd)
+is  "an empty release record is cleared without starting anything" "" "$(restarts)"
+[ -f "$FIX/state/released.vllm-new" ] && is "the empty record is removed" "removed" "kept" || ok "the empty record is removed"
 
 reset_world
 printf 'v1 vllm-new vllm Up 2 hours (unhealthy)\ni1 infinity infinity Up 10 hours (healthy)\n' > "$FIX/world/containers"
@@ -87,7 +142,7 @@ reset_world
 echo "v1 vllm-new vllm Up 20 seconds (health: starting)" > "$FIX/world/containers"
 echo "$REFUSAL" > "$FIX/world/logs.v1"
 out=$(run_wd)
-is  "with no Infinity in the project nothing is restarted" "" "$(restarts)"
+is  "with no GPU tenant in the project nothing is stopped" "" "$(restarts)"
 has "and a human is asked for" "needs a human" "$out"
 
 reset_world
@@ -95,7 +150,7 @@ printf 'v2 vllm2 vllm2 Restarting (1) 2 seconds ago\ni1 infinity infinity Up 10 
 echo "$REFUSAL" > "$FIX/world/logs.v2"
 out=$(run_wd --dry-run)
 is  "a dry run mutates nothing (and a second engine, vllm2, is covered too)" "" "$(restarts)"
-has "and reports what it would do" "would restart" "$out"
+has "and reports what it would do" "would stop" "$out"
 
 echo "watchdog: the unhealthy path is unchanged"
 

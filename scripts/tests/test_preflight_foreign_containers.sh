@@ -51,6 +51,7 @@ run_check() {
         docker() {
             case "$1" in
                 ps)          printf '%b' "$ps_out" ;;
+                inspect)     printf '%s\n' "${STUB_SERVICE:-}" ;;
                 stop|rm)     echo "MUTATED: docker $*" >> "$STACK/mutations" ;;
             esac
         }
@@ -94,6 +95,21 @@ out="$(run_check check_port_conflicts 6390 \
 is "a holder from this compose project is stopped" \
    "MUTATED: docker stop redis" "$(printf '%s\n' "$out" | grep MUTATED || true)"
 is "…and the check passes" "status=0" "$(printf '%s\n' "$out" | head -1)"
+
+# ── 3b. A container the profile runs is not a leftover ─────────────────────
+# `make start` on a running stack stopped its own healthy containers — vLLM
+# included, a cold reload of tens of GB on every `<host>-up` (ddai4,
+# 2026-10-16). `compose up -d` reconciles a service the profile runs; only a
+# container of a service it does not run is a leftover.
+out="$(STUB_SERVICE=redis PREFLIGHT_SERVICES="redis litellm vllm" run_check check_port_conflicts 6390 \
+  'redis\tgpu-inference-stack\t127.0.0.1:6390->6379/tcp\n')"
+is "a running container of a profile service is not stopped" \
+   "" "$(printf '%s\n' "$out" | grep MUTATED || true)"
+is "…and is not a conflict" "status=0" "$(printf '%s\n' "$out" | head -1)"
+out="$(STUB_SERVICE=redis-old PREFLIGHT_SERVICES="redis litellm vllm" run_check check_port_conflicts 6390 \
+  'redis-old\tgpu-inference-stack\t127.0.0.1:6390->6379/tcp\n')"
+is "a container of a service the profile does not run is still stopped" \
+   "MUTATED: docker stop redis-old" "$(printf '%s\n' "$out" | grep MUTATED || true)"
 
 # ── 4. Matching is on the HOST port, not the container port ─────────────────
 # platform-falkordb publishes 6379 INSIDE on a different host port; it does not

@@ -58,6 +58,17 @@ get_compose_project() {
     basename "$(pwd)"
 }
 
+# _runs_service <container> — is it a service the active profile runs?
+# PREFLIGHT_SERVICES is the Makefile's `compose config --services` for the
+# enabled profiles; unset (a direct run of this script) means none, i.e. every
+# holder of ours is treated as a leftover, as before.
+_runs_service() {
+    local svc
+    [ -n "${PREFLIGHT_SERVICES:-}" ] || return 1
+    svc="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' "$1" 2>/dev/null)"
+    [ -n "$svc" ] && case " $PREFLIGHT_SERVICES " in *" $svc "*) true ;; *) false ;; esac
+}
+
 # Helper: Get ports needed by active profile
 get_required_ports() {
     # Source profile files to get port configuration
@@ -244,8 +255,12 @@ check_port_conflicts() {
                 "Move our port in the server profile or .env:
    $(port_var_for "$port")=<free port>"
             conflicts=$((conflicts + 1))
+        elif [ -n "$container_using" ] && _runs_service "$container_using"; then
+            # A service this profile runs: `compose up -d` reconciles it, so a
+            # healthy one keeps serving. Stopping it reloaded vLLM on every start.
+            continue
         elif [ -n "$container_using" ]; then
-            # Our container is using it
+            # Our leftover: a service this profile no longer runs
             printf "  ${YEL}⚠${RST} Port conflict: $port in use by $container_using (old container)\n"
 
             if [ "$NO_AUTOFIX" = "1" ]; then

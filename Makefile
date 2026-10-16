@@ -301,7 +301,8 @@ start: _require_profile
 	@printf "$(BOLD)Starting$(RST) $(DIM)profile $(PROFILE_NAME)$(RST)\n"
 	@# Run pre-flight checks (auto-fixes where possible)
 	@if [ "$(SKIP_PREFLIGHT)" != "1" ]; then \
-	  ./scripts/preflight-checks.sh || exit 1; \
+	  PREFLIGHT_SERVICES="$$($(DC) $(enabled_profiles) config --services 2>/dev/null | tr '\n' ' ')" \
+	    ./scripts/preflight-checks.sh || exit 1; \
 	fi
 	@# Check for .env overrides that shadow profile settings. This catches the
 	@# case where .env has VLLM_MAX_MODEL_LEN=16384 while the profile says 65536,

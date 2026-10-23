@@ -112,6 +112,11 @@ def _probe(url: str, payload: dict, timeout: float, expect: str) -> tuple[bool, 
                 return False, "invalid embedding values"
             if not any(v != 0 for v in vector):
                 return False, "zero embedding"
+    elif expect == "results":
+        item = body[expect][0]
+        score = item.get("relevance_score") if isinstance(item, dict) else None
+        if not isinstance(item, dict) or item.get("index") != 0 or isinstance(score, bool) or not isinstance(score, (float, int)) or not math.isfinite(score):
+            return False, "invalid rerank result"
     elif expect == "choices":
         choice = body[expect][0]
         message = choice.get("message", {}) if isinstance(choice, dict) else {}
@@ -178,7 +183,7 @@ def _progressing(url: str) -> tuple[bool, str]:
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--url", required=True)
-    p.add_argument("--kind", choices=("embeddings", "chat", "transcription"), required=True)
+    p.add_argument("--kind", choices=("embeddings", "chat", "transcription", "rerank"), required=True)
     p.add_argument("--model", required=True)
     p.add_argument("--timeout", type=float, default=20.0)
     # Accepted and ignored, so an older compose file keeps working after an
@@ -189,6 +194,8 @@ def main() -> int:
 
     if args.kind == "embeddings":
         payload, expect = {"model": args.model, "input": ["health probe"]}, "data"
+    elif args.kind == "rerank":
+        payload, expect = {"model": args.model, "query": "safety", "documents": ["safety requirements"]}, "results"
     elif args.kind == "transcription":
         payload, expect = {"model": args.model}, "text"
     else:

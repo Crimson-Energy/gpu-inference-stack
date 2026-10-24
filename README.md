@@ -125,6 +125,12 @@ answered by that peer's own `/capacity`. Prometheus scrapes the same data as
 role from its copy of the `CONTRACT_*` block; `scripts/check-contract-wiring.sh`
 (run by `deploy.sh`) refuses a deploy where it and litellm's disagree.
 
+A key must list the route in its metadata —
+`{"allowed_passthrough_routes": ["/capacity"]}` — or LiteLLM answers 403.
+The `.env.example` recipes include it; for keys minted before,
+`python3 scripts/grant-capacity-access.py` (add `--dry-run` first) adds it to
+every key, keeping their other metadata.
+
 ### Keys
 
 Do not give consumers `LITELLM_MASTER_KEY`; it is an admin credential. Mint a

@@ -922,6 +922,96 @@ services:
         max-file: "${MAX_LOG_FILES:-5}"
 
   # ============================================================================
+  # CAPACITY - live load per contract role (scripts/capacity.py)
+  # ============================================================================
+  # vLLM QUEUES, it does not reject: a consumer that sends too much never gets
+  # an error to back off from, only everyone's latency climbing together. This
+  # service reads each engine's own load (vLLM /metrics, Infinity /models,
+  # llama.cpp /slots, DCGM) and answers, per gpu/<task>/<role>, how many more
+  # requests a client can send now — `recommended_concurrency`, sized by
+  # `?tokens=` for long requests.
+  #
+  # Consumers reach it THROUGH LiteLLM — `GET http://<box>:8080/capacity` with
+  # their usual virtual key (an authenticated pass-through in
+  # config/litellm/config.yaml) — so there is one base URL and one credential
+  # for inference and for load. The port below is loopback-only, for debugging.
+  #
+  # The LiteLLM image, not a new one: the script is stdlib-only Python, and
+  # that image is already built and pinned for this stack.
+  #
+  # Its CONTRACT_* list MUST match litellm's — it is how this service knows
+  # which engine serves which role. scripts/check-contract-wiring.sh compares
+  # the two rendered blocks value by value, and deploy.sh runs it, so a role
+  # re-pointed in one place and not the other is refused, not misreported.
+  # Deliberately NOT litellm's whole environment: that carries the master key
+  # and the database URL, which this read-only service has no use for.
+  capacity:
+    image: gpu-inference-stack-litellm:latest
+    pull_policy: never
+    container_name: capacity
+    restart: unless-stopped
+    entrypoint: ["python3", "/capacity.py"]
+    ports:
+      - "${CAPACITY_BIND_ADDR:-127.0.0.1}:${CAPACITY_PORT:-9097}:9097"
+    volumes:
+      - ./scripts/capacity.py:/capacity.py:ro
+    environment:
+      - CAPACITY_HOST_LABEL=${SERVER_NAME:-}
+      - CAPACITY_POLL_SECONDS=${CAPACITY_POLL_SECONDS:-5}
+      - CAPACITY_RATE_WINDOW_SECONDS=${CAPACITY_RATE_WINDOW_SECONDS:-60}
+      - CAPACITY_DCGM_URL=${CAPACITY_DCGM_URL:-http://dcgm-exporter:9400/metrics}
+      # vLLM does not publish max_num_seqs in /metrics, so each instance's
+      # scheduler ceiling comes from the same variable that started it. Keyed
+      # by the hostname a role's api_base uses (vllm / vllm-new are instance 1).
+      - CAPACITY_MAX_NUM_SEQS_VLLM=${VLLM_MAX_NUM_SEQS:-62}
+      - CAPACITY_MAX_NUM_SEQS_VLLM_NEW=${VLLM_MAX_NUM_SEQS:-62}
+      - CAPACITY_MAX_NUM_SEQS_VLLM2=${VLLM2_MAX_NUM_SEQS:-${VLLM_MAX_NUM_SEQS:-62}}
+      - CAPACITY_MAX_NUM_SEQS_VLLM3=${VLLM3_MAX_NUM_SEQS:-${VLLM_MAX_NUM_SEQS:-62}}
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-4}
+      # The router's model map, so a role served through vllm-router is
+      # measured on the instance(s) that actually run its model.
+      - ROUTER_MODEL_1=${VLLM_MODEL_NAME:-qwen3.6}
+      - ROUTER_HOST_1=vllm-new:8000
+      - ROUTER_MODEL_2=${VLLM2_MODEL_NAME-}
+      - ROUTER_HOST_2=${VLLM2_HOST:-vllm-new:8000}
+      - ROUTER_MODEL_3=${VLLM3_MODEL_NAME-}
+      - ROUTER_HOST_3=${VLLM3_HOST:-vllm-new:8000}
+      # ── EMBER CONTRACT — identical to the litellm block (checked) ──────────
+      - CONTRACT_INTERACTIVE_MODEL=${CONTRACT_INTERACTIVE_MODEL:-openai/${VLLM_MODEL_NAME:-qwen3.6}}
+      - CONTRACT_INTERACTIVE_API_BASE=${CONTRACT_INTERACTIVE_API_BASE:-http://vllm:8000/v1}
+      - CONTRACT_INTERACTIVE_API_KEY=${CONTRACT_INTERACTIVE_API_KEY:-EMPTY}
+      - CONTRACT_BULK_MODEL=${CONTRACT_BULK_MODEL:-openai/${VLLM_MODEL_NAME:-qwen3.6}}
+      - CONTRACT_BULK_API_BASE=${CONTRACT_BULK_API_BASE:-http://vllm:8000/v1}
+      - CONTRACT_BULK_API_KEY=${CONTRACT_BULK_API_KEY:-EMPTY}
+      - CONTRACT_FAST_MODEL=${CONTRACT_FAST_MODEL:-openai/${VLLM_MODEL_NAME:-qwen3.6}}
+      - CONTRACT_FAST_API_BASE=${CONTRACT_FAST_API_BASE:-http://vllm:8000/v1}
+      - CONTRACT_FAST_API_KEY=${CONTRACT_FAST_API_KEY:-EMPTY}
+      - CONTRACT_VISION_ALIAS=${CONTRACT_VISION_ALIAS:-gpu/chat/vision}
+      - CONTRACT_VISION_MODEL=${CONTRACT_VISION_MODEL:-ollama/${OLLAMA_VISION_MODEL:-gemma3:12b}}
+      - CONTRACT_VISION_API_BASE=${CONTRACT_VISION_API_BASE:-http://ollama:11434}
+      - CONTRACT_VISION_API_KEY=${CONTRACT_VISION_API_KEY:-EMPTY}
+      - CONTRACT_EMBED_ALIAS=${CONTRACT_EMBED_ALIAS:-gpu/embed/bge-m3}
+      - CONTRACT_RERANK_ALIAS=${CONTRACT_RERANK_ALIAS:-gpu/rerank/bge-reranker-v2-m3}
+      - CONTRACT_EMBED_API_BASE=${CONTRACT_EMBED_API_BASE:-http://infinity:7997}
+      - CONTRACT_RERANK_API_BASE=${CONTRACT_RERANK_API_BASE:-http://infinity:7997}
+      - CONTRACT_STT_ALIAS=${CONTRACT_STT_ALIAS:-unserved/stt}
+      - CONTRACT_STT_MODEL=${CONTRACT_STT_MODEL:-openai/${STT_MODEL:-deepdml/faster-whisper-large-v3-turbo-ct2}}
+      - CONTRACT_STT_API_BASE=${CONTRACT_STT_API_BASE:-http://stt:8000/v1}
+    networks:
+      - gpu-inference-net
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:9097/health', timeout=5)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "${MAX_LOG_SIZE:-10m}"
+        max-file: "${MAX_LOG_FILES:-3}"
+
+  # ============================================================================
   # POSTGRES - Database for LiteLLM
   # ============================================================================
   postgres:

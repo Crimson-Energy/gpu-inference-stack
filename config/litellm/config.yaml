@@ -574,3 +574,20 @@ general_settings:
 
   # Store model info in database
   store_model_in_db: true
+
+  # ── Load, per contract role ─────────────────────────────────────────────
+  # GET /capacity            -> every role this box serves
+  # GET /capacity/<alias>    -> one role, e.g. /capacity/gpu/chat/bulk
+  # ?tokens=N                -> sized for requests of ~N tokens (prompt+output)
+  #
+  # Answered by the `capacity` service (scripts/capacity.py) from the engines'
+  # own metrics. Proxied here so a consumer uses the same base URL and the same
+  # virtual key it already sends completions with; auth: true means a request
+  # without a valid key is refused by LiteLLM before it reaches the service.
+  # Read `recommended_concurrency` as "how many more requests to put in flight
+  # now", and re-read it every few seconds rather than once at startup.
+  pass_through_endpoints:
+    - path: "/capacity"
+      target: "http://capacity:9097/capacity"
+      auth: true
+      include_subpath: true

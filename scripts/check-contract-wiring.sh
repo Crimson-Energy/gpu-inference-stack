@@ -98,9 +98,47 @@ done
 
 n_ref="$(printf '%s\n' "$referenced" | grep -c . || true)"
 
-if [ -z "$missing" ]; then
-    [ "$QUIET" = 1 ] || echo "${GREEN}✓${NC} contract wiring: all $n_ref variable(s) read by config.yaml are passed to litellm"
+# ── litellm ↔ capacity ─────────────────────────────────────────────────────
+# The capacity service measures load on whatever engine each role points at,
+# and learns that from its own copy of the CONTRACT_* block. A role re-pointed
+# for litellm but not for capacity would report the OLD engine's load as the
+# role's — consumers would size their concurrency against the wrong GPU. So
+# every CONTRACT_* name capacity is given must reach litellm with the SAME
+# rendered value. (litellm may carry names capacity does not measure, e.g.
+# CONTRACT_OCR_API_BASE.)
+drift="$(printf '%s' "$rendered" | python3 -c '
+import sys, yaml
+try:
+    doc = yaml.safe_load(sys.stdin) or {}
+except yaml.YAMLError:
+    sys.exit(0)
+def env(svc):
+    e = ((doc.get("services") or {}).get(svc) or {}).get("environment") or {}
+    if isinstance(e, list):
+        e = dict((str(x).split("=", 1) + [""])[:2] for x in e)
+    return {k: ("" if v is None else str(v)) for k, v in e.items() if k.startswith("CONTRACT_")}
+cap, lite = env("capacity"), env("litellm")
+for name in sorted(cap):
+    if name not in lite:
+        print(f"{name}: given to capacity, not to litellm")
+    elif cap[name] != lite[name]:
+        print(f"{name}: litellm and capacity render different values")
+' 2>/dev/null)"
+
+if [ -z "$missing" ] && [ -z "$drift" ]; then
+    [ "$QUIET" = 1 ] || echo "${GREEN}✓${NC} contract wiring: all $n_ref variable(s) read by config.yaml are passed to litellm, and capacity sees the same roles"
     exit 0
+fi
+
+if [ -n "$drift" ]; then
+    echo ""
+    echo "${RED}✗ the capacity service and litellm disagree about where a role is served:${NC}"
+    printf '%s\n' "$drift" | sed 's/^/    /'
+    echo ""
+    echo "  /capacity would report another engine's load for that role. Keep the"
+    echo "  CONTRACT_* lines of the capacity service identical to litellm's in"
+    echo "  docker-compose.yml (values are not printed: some are keys)."
+    [ -z "$missing" ] && exit 1
 fi
 
 echo ""

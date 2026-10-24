@@ -84,6 +84,47 @@ services — a backend can be healthy while the alias in front of it is
 misconfigured (wrong served-model name, unresolved env var). Run it before
 pointing a consumer at a new box.
 
+### Load: how many requests to send
+
+vLLM queues rather than rejects. A consumer that sends too much never gets an
+error to back off from — every consumer's latency just climbs together. So the
+stack publishes its load, per role, at the same root and with the same virtual
+key as inference:
+
+```bash
+curl -H "Authorization: Bearer $KEY" http://<this host>:8080/capacity                       # every served role
+curl -H "Authorization: Bearer $KEY" http://<this host>:8080/capacity/gpu/chat/bulk         # one role
+curl -H "Authorization: Bearer $KEY" "http://<this host>:8080/capacity/gpu/chat/bulk?tokens=30000"
+```
+
+```json
+{"roles": {"gpu/chat/bulk": {"backend": "vllm", "healthy": true, "state": "idle",
+  "in_flight": 1, "waiting": 0, "max_concurrency": 64, "kv_cache_usage": 0.05,
+  "free_slots": 63, "recommended_concurrency": 63,
+  "rates": {"generation_tokens_per_s": 182.0, "mean_latency_s": 4.1, "mean_queue_s": 0.0}}},
+ "gpus": [{"index": 0, "utilization": 0.98, "memory_free_mib": 660}]}
+```
+
+**Read `recommended_concurrency` as "how many more requests to put in flight
+now"** and re-read it every few seconds (it is refreshed every
+`CAPACITY_POLL_SECONDS`, default 5) — not once at startup, because other
+consumers share the GPU. `state` is `idle` / `available` / `busy` /
+`saturated` / `down`: `busy` offers half the free room, so two consumers
+filling a box at once do not overshoot it together; `saturated` (a queue has
+formed, or the KV cache is ≥95% full) offers 0 with a `retry_after_s`.
+`?tokens=N` sizes the answer for requests of ~N tokens (prompt + output) by
+free KV cache, which is what really bounds long-context work: 64 free slots
+but room in the cache for 6 × 30k-token requests means 6.
+
+The numbers come from each engine's own metrics — vLLM `/metrics`, Infinity
+`/models`, llama.cpp `/slots`, Ollama `/api/ps`, DCGM for the GPU — read by the
+`capacity` service (`scripts/capacity.py`, stdlib Python), which LiteLLM
+proxies as an authenticated pass-through. A role served by a peer box is
+answered by that peer's own `/capacity`. Prometheus scrapes the same data as
+`gis_capacity_*{role,backend}`. The service learns which engine fills which
+role from its copy of the `CONTRACT_*` block; `scripts/check-contract-wiring.sh`
+(run by `deploy.sh`) refuses a deploy where it and litellm's disagree.
+
 ### Keys
 
 Do not give consumers `LITELLM_MASTER_KEY`; it is an admin credential. Mint a

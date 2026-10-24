@@ -76,6 +76,16 @@ scrape_configs:
     scrape_interval: 30s
     scrape_timeout: 10s
 
+  # Load per contract role, as consumers see it at /capacity (scripts/capacity.py).
+  # gis_capacity_recommended_concurrency / _load / _state{role,backend}.
+  - job_name: 'capacity'
+    static_configs:
+      - targets: ['capacity:9097']
+        labels:
+          service: 'capacity'
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
   # llama.cpp metrics.
   # Scraping works only because docker-compose.yml sets
   # LLAMA_ARG_ENDPOINT_METRICS=1 — llama-server's --metrics defaults to

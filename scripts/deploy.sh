@@ -387,6 +387,11 @@ if [ "${ENABLE_OLLAMA}" = "true" ]; then
     fi
 fi
 
+# Consumer keys need /capacity in their metadata or LiteLLM answers 403 and
+# every consumer sizes blind (README "Load"). Idempotent; never fails a deploy.
+python3 "$SCRIPT_DIR/grant-capacity-access.py" --wait 180 --quiet \
+    || echo -e "${YELLOW}! could not grant /capacity to consumer keys — run: python3 scripts/grant-capacity-access.py${NC}"
+
 # Check service health
 echo ""
 echo "Service Status:"

@@ -123,6 +123,21 @@ for name in sorted(cap):
         print(f"{name}: given to capacity, not to litellm")
     elif cap[name] != lite[name]:
         print(f"{name}: litellm and capacity render different values")
+
+# litellm stamps a vLLM priority per role only when VLLM_SCHEDULING_POLICY is
+# "priority", and vLLM rejects a non-zero priority unless IT runs that policy
+# (config/litellm/role_priority.py). A mismatch fails every bulk request.
+def raw_env(svc):
+    e = ((doc.get("services") or {}).get(svc) or {}).get("environment") or {}
+    if isinstance(e, list):
+        e = dict((str(x).split("=", 1) + [""])[:2] for x in e)
+    return {k: ("" if v is None else str(v)) for k, v in e.items()}
+policy = raw_env("litellm").get("VLLM_SCHEDULING_POLICY", "")
+for svc in ("vllm", "vllm2", "vllm3"):
+    if svc in (doc.get("services") or {}):
+        theirs = raw_env(svc).get("GIS_SCHEDULING_POLICY", "")
+        if theirs != policy:
+            print(f"VLLM_SCHEDULING_POLICY: litellm stamps for {policy!r}, {svc} runs {theirs!r}")
 ' 2>/dev/null)"
 
 if [ -z "$missing" ] && [ -z "$drift" ]; then
@@ -132,12 +147,14 @@ fi
 
 if [ -n "$drift" ]; then
     echo ""
-    echo "${RED}✗ the capacity service and litellm disagree about where a role is served:${NC}"
+    echo "${RED}✗ litellm disagrees with the capacity service or vLLM:${NC}"
     printf '%s\n' "$drift" | sed 's/^/    /'
     echo ""
-    echo "  /capacity would report another engine's load for that role. Keep the"
-    echo "  CONTRACT_* lines of the capacity service identical to litellm's in"
-    echo "  docker-compose.yml (values are not printed: some are keys)."
+    echo "  A CONTRACT_* drift makes /capacity report another engine's load for a"
+    echo "  role: keep the capacity service's CONTRACT_* lines identical to"
+    echo "  litellm's (values are not printed: some are keys). A scheduling-policy"
+    echo "  drift makes vLLM reject every stamped request: litellm and every vLLM"
+    echo "  instance must read the same VLLM_SCHEDULING_POLICY."
     [ -z "$missing" ] && exit 1
 fi
 

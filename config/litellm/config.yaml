@@ -480,6 +480,9 @@ model_list:
 # LITELLM SETTINGS
 # ============================================================================
 litellm_settings:
+  # Per-role vLLM priority, so bulk work never queues interactive chat — see
+  # role_priority.py and VLLM_SCHEDULING_POLICY in docker-compose.yml.
+  callbacks: ["role_priority.role_priority"]
   # ── Response cache: OFF ────────────────────────────────────────────────
   # Was `cache: true` with a 600s Redis TTL. Turned off when this stack became
   # shared infrastructure behind consumer gateways:

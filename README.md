@@ -131,6 +131,28 @@ The `.env.example` recipes include it; for keys minted before,
 `python3 scripts/grant-capacity-access.py` (add `--dry-run` first) adds it to
 every key, keeping their other metadata.
 
+### Priority: bulk work never queues chat
+
+All chat roles on a box usually share one vLLM, and vLLM serves first come,
+first served — so a consumer's bulk extraction burst puts everyone's
+interactive chat at the back of the queue. The stack runs vLLM with
+`--scheduling-policy priority` (`VLLM_SCHEDULING_POLICY`, default `priority`)
+and LiteLLM stamps each request's priority from its role
+(`config/litellm/role_priority.py`): lower is scheduled sooner, and under KV
+pressure the highest number is preempted first.
+
+| role | `ROLE_PRIORITY_*` default |
+|---|---|
+| `gpu/chat/interactive`, `gpu/chat/fast`, `gpu/chat/vision` | 0 |
+| `gpu/chat/bulk` | 10 |
+
+Consumers change nothing — the role they already address is the signal.
+Priority orders the queue; it does not reserve capacity. Only local vLLM
+backends are stamped (a role pointed at a peer stack is that peer's to
+prioritise). Set `VLLM_SCHEDULING_POLICY=` (empty) for first come, first
+served; `check-contract-wiring.sh` refuses a render where litellm and any vLLM
+instance disagree, because vLLM rejects a non-zero priority otherwise.
+
 ### Keys
 
 Do not give consumers `LITELLM_MASTER_KEY`; it is an admin credential. Mint a

@@ -10,9 +10,9 @@ before the route existed have no such entry, so every existing consumer would
 see the endpoint as forbidden and fall back to sizing blind.
 
 This adds "/capacity" to each key's metadata, keeping every other metadata
-field and every other allowed route. Run it once per box after deploying the
-capacity service; keys minted with the .env.example recipe already carry it.
-Idempotent.
+field and every other allowed route. `make start` and deploy.sh run it after
+every start (--wait --quiet), so a key minted by hand is granted on the next
+start; keys minted with the .env.example recipe already carry it. Idempotent.
 
 Usage:  python3 scripts/grant-capacity-access.py [--dry-run] [--alias NAME ...]
         Reads LITELLM_MASTER_KEY and LITELLM_PORT the way deploy.sh does:
@@ -24,6 +24,7 @@ import argparse
 import json
 import os
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -72,6 +73,9 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--alias", action="append", help="only keys with this key_alias (repeatable)")
     ap.add_argument("--base", default=None, help="gateway root (default http://localhost:$LITELLM_PORT)")
+    ap.add_argument("--wait", type=int, default=0, metavar="S",
+                    help="wait up to S seconds for the gateway to answer (right after a start)")
+    ap.add_argument("--quiet", action="store_true", help="print only what changed")
     args = ap.parse_args()
 
     master = dotenv("LITELLM_MASTER_KEY")
@@ -79,6 +83,17 @@ def main() -> int:
         print("LITELLM_MASTER_KEY not set (env or .env)", file=sys.stderr)
         return 2
     base = (args.base or f"http://localhost:{dotenv('LITELLM_PORT') or 8080}").rstrip("/")
+
+    deadline = time.monotonic() + args.wait
+    while True:
+        try:
+            urllib.request.urlopen(base + "/health/liveliness", timeout=5).read()
+            break
+        except OSError:
+            if time.monotonic() >= deadline:
+                print(f"gateway at {base} is not answering", file=sys.stderr)
+                return 1
+            time.sleep(3)
 
     keys, page = [], 1
     while True:
@@ -96,14 +111,16 @@ def main() -> int:
         meta = dict(k.get("metadata") or {})
         routes = list(meta.get("allowed_passthrough_routes") or [])
         if ROUTE in routes:
-            print(f"  = {alias}: already allowed")
+            if not args.quiet:
+                print(f"  = {alias}: already allowed")
             continue
         meta["allowed_passthrough_routes"] = routes + [ROUTE]
         print(f"  + {alias}: allow {ROUTE}" + (" (dry run)" if args.dry_run else ""))
         if not args.dry_run:
             call(base, master, "POST", "/key/update", {"key": k["token"], "metadata": meta})
         changed += 1
-    print(f"{changed} key(s) {'would be ' if args.dry_run else ''}updated, {len(keys)} on {base}")
+    if changed or not args.quiet:
+        print(f"{changed} key(s) {'would be ' if args.dry_run else ''}updated, {len(keys)} on {base}")
     return 0
 
 

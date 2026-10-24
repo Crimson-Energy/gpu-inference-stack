@@ -336,6 +336,10 @@ start: _require_profile
 	  sleep 10; \
 	done; \
 	printf "  $(GRN)✓$(RST) all containers healthy\n"
+	@# Consumer keys need /capacity in their metadata or LiteLLM answers 403 and
+	@# every consumer sizes blind (README "Load"). Idempotent; never fails start.
+	@python3 scripts/grant-capacity-access.py --wait 120 --quiet \
+	  || printf "  $(YEL)!$(RST) could not grant /capacity to consumer keys — run: python3 scripts/grant-capacity-access.py\n"
 	@printf "\n"; $(MAKE) --no-print-directory models
 	@printf "\n"; $(MAKE) --no-print-directory urls
 

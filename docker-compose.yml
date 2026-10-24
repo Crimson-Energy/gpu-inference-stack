@@ -46,6 +46,7 @@ x-vllm-instance: &vllm-instance
       $${GIS_STRUCTURED_OUTPUTS:+--structured-outputs-config "$${GIS_STRUCTURED_OUTPUTS}"}
       $${GIS_PREFIX_CACHING:+--enable-prefix-caching}
       $${GIS_CHUNKED_PREFILL:+--enable-chunked-prefill}
+      $${GIS_SCHEDULING_POLICY:+--scheduling-policy "$${GIS_SCHEDULING_POLICY}"}
       $${GIS_EXPERT_PARALLEL:+--enable-expert-parallel}
       $${GIS_TOOL_PARSER:+--enable-auto-tool-choice --tool-call-parser "$${GIS_TOOL_PARSER}"}
       $${GIS_REASONING_PARSER:+--reasoning-parser "$${GIS_REASONING_PARSER}"}
@@ -170,6 +171,12 @@ services:
       - 'GIS_STRUCTURED_OUTPUTS=${VLLM_STRUCTURED_OUTPUTS_CONFIG-{"backend": "xgrammar", "disable_any_whitespace": true}}'
       - GIS_PREFIX_CACHING=${VLLM_PREFIX_CACHING-1}
       - GIS_CHUNKED_PREFILL=${VLLM_CHUNKED_PREFILL-1}
+      # ONE policy for every instance (not VLLM2_/VLLM3_ variants): litellm's
+      # role_priority callback stamps a per-role priority on each request, and
+      # vLLM REJECTS any non-zero priority unless it runs this policy. So both
+      # read this same variable, and check-contract-wiring.sh refuses a render
+      # where they differ. Empty = first-come-first-served, and no stamping.
+      - GIS_SCHEDULING_POLICY=${VLLM_SCHEDULING_POLICY-priority}
       - GIS_EXPERT_PARALLEL=${VLLM_EXPERT_PARALLEL-1}
       - GIS_TOOL_PARSER=${VLLM_TOOL_CALL_PARSER-qwen3_xml}
       - GIS_REASONING_PARSER=${VLLM_REASONING_PARSER-qwen3}
@@ -203,6 +210,7 @@ services:
       - 'GIS_STRUCTURED_OUTPUTS=${VLLM2_STRUCTURED_OUTPUTS_CONFIG-{"backend": "xgrammar", "disable_any_whitespace": true}}'
       - GIS_PREFIX_CACHING=${VLLM2_PREFIX_CACHING-1}
       - GIS_CHUNKED_PREFILL=${VLLM2_CHUNKED_PREFILL-1}
+      - GIS_SCHEDULING_POLICY=${VLLM_SCHEDULING_POLICY-priority}
       - GIS_EXPERT_PARALLEL=${VLLM2_EXPERT_PARALLEL-1}
       - GIS_TOOL_PARSER=${VLLM2_TOOL_CALL_PARSER-qwen3_xml}
       - GIS_REASONING_PARSER=${VLLM2_REASONING_PARSER-qwen3}
@@ -233,6 +241,7 @@ services:
       - 'GIS_STRUCTURED_OUTPUTS=${VLLM3_STRUCTURED_OUTPUTS_CONFIG-{"backend": "xgrammar", "disable_any_whitespace": true}}'
       - GIS_PREFIX_CACHING=${VLLM3_PREFIX_CACHING-1}
       - GIS_CHUNKED_PREFILL=${VLLM3_CHUNKED_PREFILL-1}
+      - GIS_SCHEDULING_POLICY=${VLLM_SCHEDULING_POLICY-priority}
       - GIS_EXPERT_PARALLEL=${VLLM3_EXPERT_PARALLEL-1}
       - GIS_TOOL_PARSER=${VLLM3_TOOL_CALL_PARSER-qwen3_xml}
       - GIS_REASONING_PARSER=${VLLM3_REASONING_PARSER-qwen3}
@@ -860,6 +869,18 @@ services:
       - CONTRACT_STT_ALIAS=${CONTRACT_STT_ALIAS:-unserved/stt}
       - CONTRACT_STT_MODEL=${CONTRACT_STT_MODEL:-openai/${STT_MODEL:-deepdml/faster-whisper-large-v3-turbo-ct2}}
       - CONTRACT_STT_API_BASE=${CONTRACT_STT_API_BASE:-http://stt:8000/v1}
+      # ── ROLE PRIORITY (config/litellm/role_priority.py) ─────────────────────
+      # Every chat role shares one vLLM, which by default serves first come,
+      # first served — so one consumer's bulk burst queues everyone's chat
+      # behind it. With the priority policy, a lower number is scheduled first
+      # and, under KV pressure, the HIGHEST number is preempted first. The
+      # callback stamps these per role, on local vLLM backends only. Must
+      # equal the vLLM instances' policy (checked).
+      - VLLM_SCHEDULING_POLICY=${VLLM_SCHEDULING_POLICY-priority}
+      - ROLE_PRIORITY_INTERACTIVE=${ROLE_PRIORITY_INTERACTIVE:-0}
+      - ROLE_PRIORITY_FAST=${ROLE_PRIORITY_FAST:-0}
+      - ROLE_PRIORITY_VISION=${ROLE_PRIORITY_VISION:-0}
+      - ROLE_PRIORITY_BULK=${ROLE_PRIORITY_BULK:-10}
       # ── LEGACY ALIASES — the thirteen names outside the gpu/ contract ──────
       # Every one is env-driven so a box can turn off the ones it has no
       # backend for. Until 2026-09-12 they were literals in config.yaml, and

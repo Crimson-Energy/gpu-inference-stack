@@ -25,6 +25,10 @@ THREE TRAPS this avoids:
 
 Priorities (env, lower = sooner): ROLE_PRIORITY_INTERACTIVE / _FAST /
 _VISION default 0, ROLE_PRIORITY_BULK default 10.
+
+A CLIENT CANNOT SET ITS OWN. Any `priority` a request carries — top level or
+in extra_body — is removed on every request before the role's is applied, so
+no consumer can jump the queue by asking.
 """
 from __future__ import annotations
 
@@ -68,16 +72,29 @@ def is_local_vllm(api_base: Any) -> bool:
     return bool(_LOCAL_VLLM.match(host))
 
 
-def stamp(kwargs: dict) -> Optional[dict]:
-    """kwargs with extra_body.priority set for this role, or None to leave it."""
+def strip_client_priority(kwargs: dict) -> dict:
+    """kwargs without any priority the CLIENT supplied.
+
+    The role decides priority, never the caller. A top-level `priority` in a
+    request body passes through LiteLLM's scheduler and on to vLLM (verified:
+    `"priority": 1.5` on gpu/chat/bulk reached vLLM's validator), so without
+    this a consumer could send -100 and jump every other consumer's chat.
+    """
+    out = {k: v for k, v in kwargs.items() if k != "priority"}
+    if isinstance(out.get("extra_body"), dict) and "priority" in out["extra_body"]:
+        out["extra_body"] = {k: v for k, v in out["extra_body"].items() if k != "priority"}
+    return out
+
+
+def stamp(kwargs: dict) -> dict:
+    """kwargs with the client's priority removed and this role's set (local vLLM only)."""
+    out = strip_client_priority(kwargs)
     if os.environ.get("VLLM_SCHEDULING_POLICY", "").strip().lower() != "priority":
-        return None
-    priority = _role_priorities().get(_model_group(kwargs) or "")
-    if priority is None or not is_local_vllm(kwargs.get("api_base")):
-        return None
-    extra = dict(kwargs.get("extra_body") or {})
-    extra["priority"] = priority
-    return {**kwargs, "extra_body": extra}
+        return out
+    priority = _role_priorities().get(_model_group(out) or "")
+    if priority is None or not is_local_vllm(out.get("api_base")):
+        return out  # unknown group or another backend: vLLM's default (0) applies
+    return {**out, "extra_body": {**(out.get("extra_body") or {}), "priority": priority}}
 
 
 class RolePriority(CustomLogger):
@@ -85,7 +102,11 @@ class RolePriority(CustomLogger):
         try:
             return stamp(kwargs)
         except Exception:  # noqa: BLE001 — a priority hint must never fail a request
-            return None
+            # ...but a client's own priority must never survive a failure either.
+            try:
+                return strip_client_priority(kwargs)
+            except Exception:  # noqa: BLE001
+                return None
 
 
 role_priority = RolePriority()

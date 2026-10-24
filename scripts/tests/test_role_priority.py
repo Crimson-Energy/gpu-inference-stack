@@ -48,21 +48,39 @@ class RolePriority(unittest.TestCase):
         self.assertNotIn("priority", out)
         self.assertEqual(out["extra_body"], {"chat_template_kwargs": {"enable_thinking": False}, "priority": 10})
 
-    def test_nothing_without_the_priority_policy(self):
+    def test_nothing_stamped_without_the_priority_policy(self):
         with patch.dict(os.environ, {"VLLM_SCHEDULING_POLICY": ""}, clear=False):
-            self.assertIsNone(rp.stamp(call("gpu/chat/bulk")))
+            self.assertNotIn("extra_body", rp.stamp(call("gpu/chat/bulk")))
 
     def test_only_local_vllm_backends(self):
         with patch.dict(os.environ, ON, clear=False):
             for base in ("http://vllm2:8000/v1", "http://vllm-new:8000/v1", "http://vllm-router:8080/v1"):
                 self.assertIsNotNone(rp.stamp(call("gpu/chat/bulk", base)), base)
             for base in ("http://100.117.227.85:8080/v1", "http://llamacpp:8080/v1", "http://ollama:11434"):
-                self.assertIsNone(rp.stamp(call("gpu/chat/bulk", base)), base)
+                self.assertNotIn("extra_body", rp.stamp(call("gpu/chat/bulk", base)), base)
 
-    def test_unknown_groups_are_left_alone(self):
+    def test_unknown_groups_get_no_stamp(self):
         with patch.dict(os.environ, ON, clear=False):
-            self.assertIsNone(rp.stamp(call("gpu/embed/bge-m3", "http://vllm:8000/v1")))
-            self.assertIsNone(rp.stamp({"api_base": "http://vllm:8000/v1"}))
+            self.assertNotIn("extra_body", rp.stamp(call("gpu/embed/bge-m3", "http://vllm:8000/v1")))
+            self.assertNotIn("extra_body", rp.stamp({"api_base": "http://vllm:8000/v1"}))
+
+    def test_a_client_cannot_set_its_own_priority(self):
+        for env in (ON, {"VLLM_SCHEDULING_POLICY": ""}):
+            with patch.dict(os.environ, env, clear=False):
+                top = rp.stamp(call("gpu/chat/bulk", priority=-100))
+                self.assertNotIn("priority", top)
+                nested = rp.stamp(call("qwen3.6-new-direct", extra_body={"priority": -100, "top_k": 5}))
+                self.assertEqual(nested["extra_body"], {"top_k": 5})
+                peer = rp.stamp(call("gpu/chat/bulk", "http://100.117.227.85:8080/v1", priority=-100))
+                self.assertNotIn("priority", peer)
+        with patch.dict(os.environ, ON, clear=False):
+            self.assertEqual(rp.stamp(call("gpu/chat/bulk", priority=-100))["extra_body"], {"priority": 10})
+
+    def test_a_failing_stamp_still_strips_the_clients_priority(self):
+        import asyncio
+        with patch.object(rp, "stamp", side_effect=RuntimeError("boom")):
+            out = asyncio.run(rp.role_priority.async_pre_call_deployment_hook(call("gpu/chat/bulk", priority=-100), None))
+        self.assertNotIn("priority", out)
 
     def test_priorities_come_from_env(self):
         with patch.dict(os.environ, {**ON, "ROLE_PRIORITY_BULK": "50", "CONTRACT_VISION_ALIAS": "gpu/chat/vision"}):
